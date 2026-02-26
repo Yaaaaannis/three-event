@@ -1,8 +1,6 @@
-import React, { useRef, useEffect, useState, useMemo } from 'react'
+import React, { useRef, useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { useSelfieSegmentation } from '../../hooks/useSelfieSegmentation'
-import forestSrc from '../../assets/forest.webm'
 
 // ── Distortion shader ──────────────────────────────────────────────────────────
 const vertexShader = /* glsl */`
@@ -42,32 +40,31 @@ const fragmentShader = /* glsl */`
     vec3 color = vec3(r, g, b);
 
     // ── 3. Color grade: Twin Peaks palette ──────────────────────────
-    //    cool blue-purple shadows, warm amber/red highlights
     float lum = dot(color, vec3(0.299, 0.587, 0.114));
-    vec3 coolShadow = vec3(0.65, 0.75, 1.10); // cold midnight blue
-    vec3 warmLight  = vec3(1.10, 0.90, 0.70); // amber fire
+    vec3 coolShadow = vec3(0.65, 0.75, 1.10);
+    vec3 warmLight  = vec3(1.10, 0.90, 0.70);
     color *= mix(coolShadow, warmLight, lum);
 
-    // Slight desaturation (0 = grey, 1 = full color)
+    // Slight desaturation
     color = mix(vec3(lum), color, 0.75);
 
-    // Contrast crush (dark blacks, blown whites)
+    // Contrast crush
     color = (color - 0.45) * 1.45 + 0.45;
 
-    // ── 4. Vignette — darkness pooling at edges like black oil ───────
-    float vig = smoothstep(0.85, 0.18, dist);         // soft fall-off
-    float corner = 1.0 - pow(dist * 1.4, 3.0) * 0.6; // extra corner crush
+    // ── 4. Vignette ───────────────────────────────────────────────────
+    float vig = smoothstep(0.85, 0.18, dist);
+    float corner = 1.0 - pow(dist * 1.4, 3.0) * 0.6;
     color *= vig * corner;
 
     // ── 5. CRT Scanlines ─────────────────────────────────────────────
     float scan = sin(vUv.y * 700.0) * 0.025;
     color -= scan;
 
-    // ── 6. Film grain (changes every frame via uTime) ─────────────────
+    // ── 6. Film grain ─────────────────────────────────────────────────
     float grain = (hash(vUv + fract(uTime * 0.07)) - 0.5) * 0.10;
     color += grain;
 
-    // ── 7. Luminance flicker (random per ~8 frames) ───────────────────
+    // ── 7. Luminance flicker ──────────────────────────────────────────
     float flicker = 1.0 + (hash(vec2(floor(uTime * 12.0), 0.5)) - 0.5) * 0.06;
     color *= flicker;
 
@@ -75,113 +72,70 @@ const fragmentShader = /* glsl */`
   }
 `
 
-export default function Mirror({ position = [0, 2, 0] }: { position?: [number, number, number] }) {
-    const videoRef = useRef<HTMLVideoElement | null>(null)
+// ── Props ──────────────────────────────────────────────────────────────────────
+interface MirrorProps {
+  position?: [number, number, number]
+  /** [width, height] of the mirror plane in world units. Default: [2, 3] */
+  size?: [number, number]
+  /** Segmented person canvas texture (shared, produced by SceneManager) */
+  canvasTex: THREE.CanvasTexture | null
+  /** Forest background video texture (shared, produced by SceneManager) */
+  forestTex: THREE.VideoTexture | null
+}
 
-    useEffect(() => {
-        const video = document.createElement('video')
-        video.autoplay = true
-        video.muted = true
-        video.playsInline = true
-        videoRef.current = video
+// ── Component ─────────────────────────────────────────────────────────────────
+export default function Mirror({ position = [0, 2, 0], size = [2, 3], canvasTex, forestTex }: MirrorProps) {
+  const [w, h] = size
+  const shaderRef = useRef<THREE.ShaderMaterial>(null)
 
-        navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
-            .then((stream) => {
-                video.srcObject = stream
-                video.addEventListener('playing', () => { }, { once: true })
-                video.play()
-            })
-            .catch((err) => console.error('Webcam error', err))
+  // Each mirror gets its own uniforms object so uTime can differ per instance
+  // (currently all sync'd, but allows future per-mirror FX easily)
+  const uniforms = useMemo(() => ({
+    uTex: { value: canvasTex ?? null },
+    uTime: { value: 0 },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []) // intentionally created once — texture ref updated imperatively below
 
-        return () => {
-            if (video.srcObject)
-                (video.srcObject as MediaStream).getTracks().forEach(t => t.stop())
+  useFrame(({ clock }) => {
+    if (!shaderRef.current) return
+    shaderRef.current.uniforms.uTime.value = clock.getElapsedTime()
+    // Keep the shared texture reference in sync (canvasTex may arrive after mount)
+    if (canvasTex && shaderRef.current.uniforms.uTex.value !== canvasTex) {
+      shaderRef.current.uniforms.uTex.value = canvasTex
+    }
+  })
+
+  return (
+    <group position={position}>
+      {/* Mirror frame */}
+      <mesh position={[0, 0, -0.05]}>
+        <boxGeometry args={[w + 0.2, h + 0.2, 0.1]} />
+        <meshStandardMaterial color="#222" metalness={1} roughness={0.1} />
+      </mesh>
+
+      {/* Forest video background */}
+      <mesh position={[0, 0, 0]}>
+        <planeGeometry args={[w, h]} />
+        {forestTex
+          ? <meshBasicMaterial map={forestTex} />
+          : <meshStandardMaterial color="#111" />
         }
-    }, [])
+      </mesh>
 
-    const { canvasRef, isReady } = useSelfieSegmentation(videoRef)
-
-    // — Forest background video texture —
-    const [forestTexture, setForestTexture] = useState<THREE.VideoTexture | null>(null)
-    useEffect(() => {
-        const vid = document.createElement('video')
-        vid.src = forestSrc
-        vid.loop = true
-        vid.muted = true
-        vid.playsInline = true
-        vid.autoplay = true
-        vid.play().catch(() => { })
-        const tex = new THREE.VideoTexture(vid)
-        tex.colorSpace = THREE.SRGBColorSpace
-        tex.generateMipmaps = false
-        tex.minFilter = THREE.LinearFilter
-        tex.magFilter = THREE.LinearFilter
-        setForestTexture(tex)
-        return () => { vid.pause(); tex.dispose() }
-    }, [])
-
-    const [canvasTexture, setCanvasTexture] = useState<THREE.CanvasTexture | null>(null)
-
-    useEffect(() => {
-        if (!isReady || !canvasRef.current) return
-        const tex = new THREE.CanvasTexture(canvasRef.current)
-        tex.generateMipmaps = false
-        tex.minFilter = THREE.LinearFilter
-        tex.magFilter = THREE.LinearFilter
-        setCanvasTexture(tex)
-        return () => tex.dispose()
-    }, [isReady])
-
-    const uniforms = useMemo(() => ({
-        uTex: { value: null as THREE.Texture | null },
-        uTime: { value: 0 }
-    }), [])
-
-    const shaderRef = useRef<THREE.ShaderMaterial>(null)
-
-    useFrame(({ clock }) => {
-        if (canvasTexture) {
-            canvasTexture.needsUpdate = true
-        }
-        if (shaderRef.current) {
-            shaderRef.current.uniforms.uTime.value = clock.getElapsedTime()
-            if (canvasTexture && !shaderRef.current.uniforms.uTex.value) {
-                shaderRef.current.uniforms.uTex.value = canvasTexture
-            }
-        }
-    })
-
-    return (
-        <group position={position}>
-            {/* Mirror frame */}
-            <mesh position={[0, 0, -0.05]}>
-                <boxGeometry args={[2.2, 3.2, 0.1]} />
-                <meshStandardMaterial color="#222" metalness={1} roughness={0.1} />
-            </mesh>
-
-            {/* Forest video background */}
-            <mesh position={[0, 0, 0]}>
-                <planeGeometry args={[2, 3]} />
-                {forestTexture
-                    ? <meshBasicMaterial map={forestTexture} />
-                    : <meshStandardMaterial color="#111" />
-                }
-            </mesh>
-
-            {/* Distorted person overlay */}
-            {canvasTexture && (
-                <mesh position={[0, 0, 0.01]}>
-                    <planeGeometry args={[2, 3]} />
-                    <shaderMaterial
-                        ref={shaderRef}
-                        vertexShader={vertexShader}
-                        fragmentShader={fragmentShader}
-                        uniforms={{ ...uniforms, uTex: { value: canvasTexture } }}
-                        transparent
-                        depthWrite={false}
-                    />
-                </mesh>
-            )}
-        </group>
-    )
+      {/* Distorted person overlay */}
+      {canvasTex && (
+        <mesh position={[0, 0, 0.01]}>
+          <planeGeometry args={[w, h]} />
+          <shaderMaterial
+            ref={shaderRef}
+            vertexShader={vertexShader}
+            fragmentShader={fragmentShader}
+            uniforms={uniforms}
+            transparent
+            depthWrite={false}
+          />
+        </mesh>
+      )}
+    </group>
+  )
 }

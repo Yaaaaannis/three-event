@@ -5,22 +5,25 @@ import { ImageSegmenter, FilesetResolver } from '@mediapipe/tasks-vision';
 const DISPLAY_W = 480;
 const DISPLAY_H = 720;
 
+// Maximum ring buffer size — supports delays up to this many frames
+const MAX_DELAY = 60;
+
 export function useSelfieSegmentation(videoRef: React.RefObject<HTMLVideoElement | null>) {
     const segmenterRef = useRef<ImageSegmenter | null>(null);
 
-    // displayCanvas is what Three.js reads — always 2:3 portrait
-    const canvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
-    // Intermediate canvas at MediaPipe's output resolution
+    // Intermediate canvases at MediaPipe's output resolution
     const compositeCanvas = useRef<HTMLCanvasElement>(document.createElement('canvas'));
     const maskCanvas = useRef<HTMLCanvasElement>(document.createElement('canvas'));
 
     const [isReady, setIsReady] = useState(false);
     const requestRef = useRef<number>(0);
 
+    // ── Shared ring buffer — all mirrors read from this at their own offset ──
+    const ringRef = useRef<(ImageData | null)[]>(Array(MAX_DELAY).fill(null));
+    const frameIndexRef = useRef<number>(0);
+
     useEffect(() => {
         let active = true;
-        canvasRef.current.width = DISPLAY_W;
-        canvasRef.current.height = DISPLAY_H;
 
         async function initMediaPipe() {
             try {
@@ -57,16 +60,7 @@ export function useSelfieSegmentation(videoRef: React.RefObject<HTMLVideoElement
         if (!isReady || !videoRef.current) return;
 
         const video = videoRef.current;
-        const display = canvasRef.current;
-        const displayCtx = display.getContext('2d');
-        if (!displayCtx) return;
-
         let active = true;
-
-        // Ring buffer: 12 frames of ImageData at display resolution
-        const DELAY = 24;
-        const ring: (ImageData | null)[] = Array(DELAY).fill(null);
-        let frameIndex = 0;
 
         // Reusable snap canvas (avoid allocating one per frame)
         const snap = document.createElement('canvas');
@@ -90,28 +84,26 @@ export function useSelfieSegmentation(videoRef: React.RefObject<HTMLVideoElement
                             const comp = compositeCanvas.current;
                             const mask = maskCanvas.current;
 
-                            // Sync intermediate canvases to MediaPipe output size
                             if (comp.width !== mw || comp.height !== mh) {
                                 comp.width = mw; comp.height = mh;
                                 mask.width = mw; mask.height = mh;
                             }
 
-                            // 1. Build binary mask on maskCanvas
+                            // 1. Build binary mask
                             const catArr = result.categoryMask.getAsUint8Array();
                             const rgba = new Uint8ClampedArray(mw * mh * 4);
                             for (let y = 0; y < mh; y++) {
                                 for (let x = 0; x < mw; x++) {
-                                    const srcI = y * mw + (mw - 1 - x); // flipped X to match mirrored video
+                                    const srcI = y * mw + (mw - 1 - x);
                                     const dstI = y * mw + x;
                                     const o = dstI * 4;
                                     rgba[o] = rgba[o + 1] = rgba[o + 2] = 255;
                                     rgba[o + 3] = catArr[srcI] === 0 ? 255 : 0;
                                 }
                             }
-                            const maskCtx = mask.getContext('2d')!;
-                            maskCtx.putImageData(new ImageData(rgba, mw, mh), 0, 0);
+                            mask.getContext('2d')!.putImageData(new ImageData(rgba, mw, mh), 0, 0);
 
-                            // 2. Composite on comp canvas: mask → source-in → mirrored video
+                            // 2. Composite: mask → source-in → mirrored video
                             const compCtx = comp.getContext('2d')!;
                             compCtx.save();
                             compCtx.clearRect(0, 0, mw, mh);
@@ -121,26 +113,19 @@ export function useSelfieSegmentation(videoRef: React.RefObject<HTMLVideoElement
                             compCtx.drawImage(video, -mw, 0, mw, mh);
                             compCtx.restore();
 
-                            // 3. Crop portrait slice into a temp canvas
+                            // 3. Crop to portrait 2:3 into snap canvas
                             const scale = DISPLAY_H / mh;
                             const scaledW = mw * scale;
                             const sx = (scaledW - DISPLAY_W) / 2 / scale;
                             const sw = DISPLAY_W / scale;
-
-                            // Snapshot this frame into the reusable snap canvas
                             snapCtx.clearRect(0, 0, DISPLAY_W, DISPLAY_H);
                             snapCtx.drawImage(comp, sx, 0, sw, mh, 0, 0, DISPLAY_W, DISPLAY_H);
-                            const currentFrame = snapCtx.getImageData(0, 0, DISPLAY_W, DISPLAY_H);
 
-                            // Save to ring buffer
-                            ring[frameIndex % DELAY] = currentFrame;
+                            // 4. Push current frame into shared ring buffer
+                            const idx = frameIndexRef.current;
+                            ringRef.current[idx % MAX_DELAY] = snapCtx.getImageData(0, 0, DISPLAY_W, DISPLAY_H);
+                            frameIndexRef.current = idx + 1;
 
-                            // Display frame from DELAY frames ago
-                            const delayedFrame = ring[(frameIndex + 1) % DELAY];
-                            displayCtx.clearRect(0, 0, DISPLAY_W, DISPLAY_H);
-                            if (delayedFrame) displayCtx.putImageData(delayedFrame, 0, 0);
-
-                            frameIndex++;
                             result.categoryMask.close();
                         });
                     } catch (e) {
@@ -162,5 +147,5 @@ export function useSelfieSegmentation(videoRef: React.RefObject<HTMLVideoElement
         return () => { active = false; cancelAnimationFrame(requestRef.current); };
     }, [isReady, videoRef]);
 
-    return { canvasRef, isReady };
+    return { ringRef, frameIndexRef, isReady };
 }
