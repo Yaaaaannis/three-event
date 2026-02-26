@@ -75,6 +75,8 @@ const fragmentShader = /* glsl */`
 // ── Props ──────────────────────────────────────────────────────────────────────
 interface MirrorProps {
   position?: [number, number, number]
+  /** Euler rotation in radians [x, y, z]. Default: [0, 0, 0] */
+  rotation?: [number, number, number]
   /** [width, height] of the mirror plane in world units. Default: [2, 3] */
   size?: [number, number]
   /** Segmented person canvas texture (shared, produced by SceneManager) */
@@ -84,7 +86,7 @@ interface MirrorProps {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export default function Mirror({ position = [0, 2, 0], size = [2, 3], canvasTex, forestTex }: MirrorProps) {
+export default function Mirror({ position = [0, 2, 0], rotation = [0, 0, 0], size = [2, 3], canvasTex, forestTex }: MirrorProps) {
   const [w, h] = size
   const shaderRef = useRef<THREE.ShaderMaterial>(null)
 
@@ -106,7 +108,7 @@ export default function Mirror({ position = [0, 2, 0], size = [2, 3], canvasTex,
   })
 
   return (
-    <group position={position}>
+    <group position={position} rotation={rotation}>
       {/* Mirror frame */}
       <mesh position={[0, 0, -0.05]}>
         <boxGeometry args={[w + 0.2, h + 0.2, 0.1]} />

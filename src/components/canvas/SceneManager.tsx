@@ -101,6 +101,7 @@ export default function SceneManager() {
                 {/* Petit miroir gauche — ~0.33 s de retard */}
                 <Mirror
                     position={[-2.8, 0.8, -0.3]}
+                    rotation={[0, Math.PI * 0.4, -Math.PI * 0.2]}
                     size={[1.2, 1.8]}
                     canvasTex={canvasTexLeft}
                     forestTex={forestTex}
@@ -109,6 +110,7 @@ export default function SceneManager() {
                 {/* Miroir fin droite — ~0.75 s de retard */}
                 <Mirror
                     position={[2.6, 1.6, -0.2]}
+                    rotation={[-Math.PI * 0.1, -Math.PI * 0.3, -Math.PI * 0.2]}
                     size={[1, 2.5]}
                     canvasTex={canvasTexRight}
                     forestTex={forestTex}
