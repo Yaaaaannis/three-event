@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    background-color: #000;
+    color: #fff;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  /* Font premium/minimalist simulation */
+  h1, h2, p {
+    letter-spacing: -0.02em;
+  }
+}
+
+/* Custom cursor for desktop */
+@media (pointer: fine) {
+  body {
+    cursor: none;
+  }
+}
