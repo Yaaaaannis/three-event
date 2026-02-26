@@ -1,4 +1,4 @@
-import React, { useRef } from 'react'
+import { useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useStore } from '../../store/useStore'
@@ -59,8 +59,10 @@ export default function BreachPlane() {
       materialRef.current.uniforms.uProgress.value = breachProgress
       materialRef.current.uniforms.uTouchPos.value.set(touchPosition.x, touchPosition.y)
 
-      // Hide the plane smoothly if breached, without unmounting it
-      meshRef.current.visible = !isBreached
+      // Hide only once the shader hole has fully expanded (progress = 1).
+      // Using just isBreached risks hiding the mesh one frame too early,
+      // before the renderer has drawn the final full-hole frame.
+      meshRef.current.visible = !(isBreached && breachProgress >= 1.0)
     }
   })
 
